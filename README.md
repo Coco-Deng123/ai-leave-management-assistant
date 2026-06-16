@@ -85,3 +85,7 @@ leave-management-assistant/
 ## Author
 
 Hanyue Deng
+
+## Demo 
+
+A short demonstration video is available in docs/demo.mp4.
