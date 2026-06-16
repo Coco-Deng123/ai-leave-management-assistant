@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>请假管理助手</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: #1f2937;
+      background: #f3f6fb;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+    }
+
+    main {
+      width: min(100%, 620px);
+      padding: 32px;
+      border-radius: 16px;
+      background: #ffffff;
+      box-shadow: 0 12px 36px rgba(15, 23, 42, 0.09);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+    }
+
+    .subtitle {
+      margin: 0 0 28px;
+      color: #64748b;
+    }
+
+    form {
+      display: grid;
+      gap: 18px;
+    }
+
+    .field {
+      display: grid;
+      gap: 7px;
+    }
+
+    .date-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    label {
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    input,
+    select,
+    button {
+      width: 100%;
+      min-height: 44px;
+      border-radius: 8px;
+      font: inherit;
+    }
+
+    input,
+    select {
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      background: #ffffff;
+    }
+
+    input:focus,
+    select:focus {
+      border-color: #2563eb;
+      outline: 3px solid rgba(37, 99, 235, 0.12);
+    }
+
+    button {
+      border: 0;
+      color: #ffffff;
+      background: #2563eb;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    button:disabled {
+      opacity: 0.65;
+      cursor: wait;
+    }
+
+    #result {
+      display: none;
+      margin-top: 24px;
+      padding: 16px;
+      border-radius: 10px;
+      overflow-wrap: anywhere;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    #rule-card {
+      margin-top: 24px;
+      padding: 18px;
+      border-radius: 12px;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      line-height: 1.6;
+    }
+
+    #rule-card h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    #rule-card ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    #rule-card li {
+      margin: 5px 0;
+    }
+
+    #result h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    #result p {
+      margin: 8px 0;
+    }
+
+    #result.success {
+      display: block;
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+
+    #result.error {
+      display: block;
+      border-color: #fca5a5;
+      background: #fef2f2;
+    }
+
+    #result.pending {
+      display: block;
+      border-color: #93c5fd;
+      background: #eff6ff;
+    }
+
+    @media (max-width: 560px) {
+      main {
+        padding: 24px 20px;
+      }
+
+      .date-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>请假管理助手</h1>
+    <p class="subtitle">填写请假信息，由 Dify Workflow 完成审批。</p>
+
+    <form id="leave-form">
+      <div class="field">
+        <label for="employee_id">员工 ID</label>
+        <input id="employee_id" name="employee_id" placeholder="例如 E001"
+               required>
+      </div>
+
+      <div class="field">
+        <label for="leave_type">请假类型</label>
+        <select id="leave_type" name="leave_type" required>
+          <option value="annual_leave">年假</option>
+          <option value="sick_leave">病假</option>
+          <option value="personal_leave">事假</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="leave_days">请假天数</label>
+        <input id="leave_days" name="leave_days" type="number" min="0.5"
+               step="0.5" placeholder="例如 1" required>
+      </div>
+
+      <div class="date-row">
+        <div class="field">
+          <label for="start_date">开始日期</label>
+          <input id="start_date" name="start_date" type="date" required>
+        </div>
+
+        <div class="field">
+          <label for="end_date">结束日期</label>
+          <input id="end_date" name="end_date" type="date" required>
+        </div>
+      </div>
+
+      <button id="submit-button" type="submit">提交请假申请</button>
+    </form>
+
+    <section id="rule-card" aria-live="polite">
+      <h2 id="rule-title">年假规则</h2>
+      <ul id="rule-list">
+        <li>正在加载请假规则...</li>
+      </ul>
+    </section>
+
+    <section id="result" aria-live="polite"></section>
+  </main>
+
+  <script>
+    const form = document.querySelector("#leave-form");
+    const leaveTypeSelect = document.querySelector("#leave_type");
+    const button = document.querySelector("#submit-button");
+    const result = document.querySelector("#result");
+    const ruleTitle = document.querySelector("#rule-title");
+    const ruleList = document.querySelector("#rule-list");
+
+    leaveTypeSelect.addEventListener("change", () => {
+      loadLeaveRule(leaveTypeSelect.value);
+    });
+
+    loadLeaveRule(leaveTypeSelect.value);
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      button.disabled = true;
+      button.textContent = "审批中...";
+      result.className = "";
+      result.style.display = "block";
+      result.textContent = "正在调用 Dify Workflow，请稍候...";
+
+      const data = new FormData(form);
+      const payload = {
+        employee_id: data.get("employee_id").trim(),
+        leave_type: data.get("leave_type"),
+        leave_days: Number(data.get("leave_days")),
+        start_date: data.get("start_date"),
+        end_date: data.get("end_date")
+      };
+
+      try {
+        const response = await fetch("/api/leave-request", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(payload)
+        });
+        const body = await response.json();
+
+        if (!response.ok || !body.success) {
+          const details = body.details
+            ? `\n${JSON.stringify(body.details, null, 2)}`
+            : "";
+          throw new Error(`${body.message || "请假审批失败"}${details}`);
+        }
+
+        renderApprovalResult(body);
+      } catch (error) {
+        result.className = "error";
+        result.innerHTML = `
+          <h2>提交失败</h2>
+          <p>${escapeHtml(error.message)}</p>
+        `;
+      } finally {
+        button.disabled = false;
+        button.textContent = "提交请假申请";
+      }
+    });
+
+    async function loadLeaveRule(leaveType) {
+      ruleTitle.textContent = "请假规则";
+      ruleList.innerHTML = "<li>正在加载请假规则...</li>";
+
+      try {
+        const response = await fetch(`/api/leave-rule/${encodeURIComponent(leaveType)}`);
+        const contentType = response.headers.get("Content-Type") || "";
+        if (!contentType.includes("application/json")) {
+          throw new Error("请假规则接口未返回 JSON，请重启后端服务后刷新页面。");
+        }
+        const body = await response.json();
+
+        if (!response.ok || !body.success) {
+          throw new Error(body.message || "请假规则加载失败");
+        }
+
+        ruleTitle.textContent = body.title;
+        ruleList.innerHTML = body.rules
+          .map((rule) => `<li>${escapeHtml(rule)}</li>`)
+          .join("");
+      } catch (error) {
+        ruleTitle.textContent = "请假规则提示";
+        ruleList.innerHTML = `<li>${escapeHtml(error.message)}</li>`;
+      }
+    }
+
+    function renderApprovalResult(body) {
+      const approval = body.approval || {};
+      const message = cleanMessage(findApprovalText(body));
+      const approved = decideApproval(approval.approved, message);
+      const title = approved === true
+        ? "审批通过"
+        : approved === false
+          ? "审批拒绝"
+          : "审批结果";
+
+      if (approved === true) {
+        result.className = "success";
+      } else if (approved === false) {
+        result.className = "error";
+      } else {
+        result.className = "pending";
+      }
+
+      result.innerHTML = `
+        <h2>${escapeHtml(title)}</h2>
+        <p>${escapeHtml(message)}</p>
+      `;
+    }
+
+    function findApprovalText(body) {
+      const candidates = [
+        body.approval?.display_text,
+        body.result?.data?.outputs?.result,
+        body.result?.data?.outputs?.message,
+        body.result?.data?.outputs?.text,
+        body.result?.data?.outputs?.output,
+        body.result?.data?.outputs?.answer,
+        body.result?.outputs?.result,
+        body.result?.result,
+        body.result?.message
+      ];
+
+      for (const value of candidates) {
+        if (typeof value === "string" && value.trim()) {
+          return value;
+        }
+      }
+
+      const recursiveText = findTextByKey(body, ["result", "message", "text", "output", "answer"]);
+      if (recursiveText) {
+        return recursiveText;
+      }
+
+      return "无法解析审批结果，请检查 Dify Workflow 的输出字段是否包含 result、message、text、output 或 answer。";
+    }
+
+    function findTextByKey(value, keys) {
+      if (!value || typeof value !== "object") {
+        return "";
+      }
+
+      for (const key of keys) {
+        const child = value[key];
+        if (typeof child === "string" && child.trim()) {
+          return child;
+        }
+      }
+
+      for (const child of Object.values(value)) {
+        const found = findTextByKey(child, keys);
+        if (found) {
+          return found;
+        }
+      }
+
+      return "";
+    }
+
+    function decideApproval(approved, message) {
+      if (approved === true || approved === false) {
+        return approved;
+      }
+
+      const text = String(message).toLowerCase();
+      if (["拒绝", "驳回", "不通过", "余额不足", "rejected", "denied", "failed"]
+          .some((word) => text.includes(word))) {
+        return false;
+      }
+      if (["✅", "审批通过", "通过", "批准", "已通过", "approved", "succeeded", "success"]
+          .some((word) => text.includes(word))) {
+        return true;
+      }
+      return null;
+    }
+
+    function cleanMessage(value) {
+      const text = String(value)
+        .replaceAll("✅", "")
+        .replace(/\s+/g, " ")
+        .replace(/原余额：/g, "原余额 ")
+        .replace(/新余额：/g, "新余额 ")
+        .replace(/扣减天数：/g, "扣减天数 ")
+        .replace(/天\s+/g, "天，")
+        .replace(/，+/g, "，")
+        .replace(/，。/g, "。")
+        .trim();
+
+      return text || "无法解析审批结果，请检查 Dify Workflow 的输出字段。";
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+  </script>
+</body>
+</html>

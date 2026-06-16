@@ -1,0 +1,11 @@
+﻿employee_id,name,department,position_level,is_manager,hire_date,province,supervisor,director,hrbp
+E001,张三,产品部,P5,FALSE,2024/3/15,重庆,李经理,王总监,陈HR
+E002,李四,产品部,P4,FALSE,2025/1/8,重庆,李经理,王总监,陈HR
+E003,王五,产品部,P6,FALSE,2023/7/1,重庆,李经理,王总监,陈HR
+E004,李经理,产品部,M1,TRUE,2021/5/10,重庆,王总监,王总监,陈HR
+E005,赵六,技术部,P5,FALSE,2024/8/20,上海,周经理,刘总监,孙HR
+E006,孙七,技术部,P3,FALSE,2025/2/1,上海,周经理,刘总监,孙HR
+E007,周经理,技术部,M2,TRUE,2020/11/15,上海,刘总监,刘总监,孙HR
+E008,钱八,人事部,P5,FALSE,2023/6/1,北京,吴经理,郑总监,何HR
+E009,吴经理,人事部,M1,TRUE,2021/3/12,北京,郑总监,郑总监,何HR
+E010,郑总监,人事部,M3,TRUE,2018/5/1,北京,CEO,CEO,何HR
