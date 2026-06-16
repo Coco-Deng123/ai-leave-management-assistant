@@ -1,16 +1,3 @@
-## Screenshots
-
-### Leave Request Interface
-
-![Leave Request Interface](docs/homepage.png)
-
-### Approval Result
-
-![Approval Result](docs/approval-success.png)
-
-### Dify Workflow
-
-![Dify Workflow](docs/dify-workflow.png)
 # AI Leave Management Assistant
 
 An AI-powered leave management assistant built with Flask, SQLite, and Dify.
@@ -66,6 +53,19 @@ leave-management-assistant/
 5. Approved requests automatically deduct leave balances.
 6. Results are stored in the database.
 
+## Screenshots
+
+### Leave Request Interface
+
+![Leave Request Interface](docs/homepage.png)
+
+### Approval Result
+
+![Approval Result](docs/approval-success.png)
+
+### Dify Workflow
+
+![Dify Workflow](docs/dify-workflow.png)
 ## Example Functions
 
 * Query employee leave balances
