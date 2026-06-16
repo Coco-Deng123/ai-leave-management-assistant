@@ -30,10 +30,7 @@ The system supports multiple leave types and provides automated leave balance ma
 * Ngrok
 
 ## Project Structure
-
-```text
 leave-management-assistant/
-
 ├── app.py
 ├── server.py
 ├── frontend/
@@ -42,7 +39,6 @@ leave-management-assistant/
 ├── docs/
 ├── requirements.txt
 └── database/
-```
 
 ## Workflow
 
@@ -56,16 +52,14 @@ leave-management-assistant/
 ## Screenshots
 
 ### Leave Request Interface
-
 ![Leave Request Interface](docs/homepage.png)
 
 ### Approval Result
-
 ![Approval Result](docs/approval-success.png)
 
 ### Dify Workflow
-
 ![Dify Workflow](docs/dify-workflow.png)
+
 ## Example Functions
 
 * Query employee leave balances
@@ -86,6 +80,7 @@ leave-management-assistant/
 
 Hanyue Deng
 
-## Demo 
+## Demo
 
-A short demonstration video is available in docs/demo.mp4.
+A short demonstration video is available in `docs/demo.mp4`.
+
