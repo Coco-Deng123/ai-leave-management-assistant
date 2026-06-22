@@ -44,6 +44,21 @@
       gap: 18px;
     }
 
+    .upload-card {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 28px;
+      padding: 18px;
+      border-radius: 12px;
+      border: 1px solid #dbeafe;
+      background: #f8fbff;
+    }
+
+    .upload-card h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
     .field {
       display: grid;
       gap: 7px;
@@ -105,6 +120,46 @@
       border: 1px solid #e2e8f0;
       font-size: 14px;
       line-height: 1.6;
+    }
+
+    #upload-result {
+      display: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    #upload-result.success {
+      display: block;
+      border: 1px solid #86efac;
+      background: #f0fdf4;
+    }
+
+    #upload-result.error {
+      display: block;
+      border: 1px solid #fca5a5;
+      background: #fef2f2;
+    }
+
+    #policy-upload-result {
+      display: none;
+      padding: 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    #policy-upload-result.success {
+      display: block;
+      border: 1px solid #86efac;
+      background: #f0fdf4;
+    }
+
+    #policy-upload-result.error {
+      display: block;
+      border: 1px solid #fca5a5;
+      background: #fef2f2;
     }
 
     #rule-card {
@@ -173,6 +228,34 @@
     <h1>请假管理助手</h1>
     <p class="subtitle">填写请假信息，由 Dify Workflow 完成审批。</p>
 
+    <section class="upload-card">
+      <h2>员工信息导入</h2>
+      <form id="employee-upload-form">
+        <div class="field">
+          <label for="employees_csv">上传员工信息 CSV</label>
+          <input id="employees_csv" name="file" type="file"
+                 accept=".csv" required>
+        </div>
+
+        <button id="upload-button" type="submit">上传并导入员工信息</button>
+      </form>
+      <div id="upload-result" aria-live="polite"></div>
+    </section>
+
+    <section class="upload-card">
+      <h2>请假制度上传</h2>
+      <form id="policy-upload-form">
+        <div class="field">
+          <label for="policy_file">上传请假制度文件</label>
+          <input id="policy_file" name="file" type="file"
+                 accept=".txt" required>
+        </div>
+
+        <button id="policy-upload-button" type="submit">上传请假制度</button>
+      </form>
+      <div id="policy-upload-result" aria-live="polite"></div>
+    </section>
+
     <form id="leave-form">
       <div class="field">
         <label for="employee_id">员工 ID</label>
@@ -183,6 +266,7 @@
       <div class="field">
         <label for="leave_type">请假类型</label>
         <select id="leave_type" name="leave_type" required>
+          <option value="">请选择请假类型</option>
           <option value="annual_leave">年假</option>
           <option value="sick_leave">病假</option>
           <option value="personal_leave">事假</option>
@@ -211,9 +295,9 @@
     </form>
 
     <section id="rule-card" aria-live="polite">
-      <h2 id="rule-title">年假规则</h2>
+      <h2 id="rule-title">请假规则提示</h2>
       <ul id="rule-list">
-        <li>正在加载请假规则...</li>
+        <li>请选择请假类型查看规则</li>
       </ul>
     </section>
 
@@ -222,9 +306,15 @@
 
   <script>
     const form = document.querySelector("#leave-form");
+    const employeeUploadForm = document.querySelector("#employee-upload-form");
+    const policyUploadForm = document.querySelector("#policy-upload-form");
     const leaveTypeSelect = document.querySelector("#leave_type");
     const button = document.querySelector("#submit-button");
+    const uploadButton = document.querySelector("#upload-button");
+    const policyUploadButton = document.querySelector("#policy-upload-button");
     const result = document.querySelector("#result");
+    const uploadResult = document.querySelector("#upload-result");
+    const policyUploadResult = document.querySelector("#policy-upload-result");
     const ruleTitle = document.querySelector("#rule-title");
     const ruleList = document.querySelector("#rule-list");
 
@@ -232,7 +322,73 @@
       loadLeaveRule(leaveTypeSelect.value);
     });
 
-    loadLeaveRule(leaveTypeSelect.value);
+    showEmptyLeaveRule();
+
+    employeeUploadForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      uploadButton.disabled = true;
+      uploadButton.textContent = "正在导入...";
+      uploadResult.className = "";
+      uploadResult.style.display = "block";
+      uploadResult.textContent = "正在上传并导入员工信息...";
+
+      const formData = new FormData(employeeUploadForm);
+
+      try {
+        const response = await fetch("/api/upload-employees", {
+          method: "POST",
+          body: formData
+        });
+        const body = await response.json();
+
+        if (!response.ok || !body.success) {
+          throw new Error(body.message || "员工信息导入失败");
+        }
+
+        uploadResult.className = "success";
+        uploadResult.textContent =
+          `员工信息导入成功，新增${body.inserted}名员工，更新${body.updated}名员工`;
+      } catch (error) {
+        uploadResult.className = "error";
+        uploadResult.textContent = error.message;
+      } finally {
+        uploadButton.disabled = false;
+        uploadButton.textContent = "上传并导入员工信息";
+      }
+    });
+
+    policyUploadForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      policyUploadButton.disabled = true;
+      policyUploadButton.textContent = "正在上传...";
+      policyUploadResult.className = "";
+      policyUploadResult.style.display = "block";
+      policyUploadResult.textContent = "正在上传请假制度...";
+
+      const formData = new FormData(policyUploadForm);
+
+      try {
+        const response = await fetch("/api/upload-policy", {
+          method: "POST",
+          body: formData
+        });
+        const body = await response.json();
+
+        if (!response.ok || !body.success) {
+          throw new Error(body.message || "请假制度上传失败");
+        }
+
+        policyUploadResult.className = "success";
+        policyUploadResult.textContent = body.message;
+        await loadLeaveRule(leaveTypeSelect.value);
+      } catch (error) {
+        policyUploadResult.className = "error";
+        policyUploadResult.textContent = error.message;
+      } finally {
+        policyUploadButton.disabled = false;
+        policyUploadButton.textContent = "上传请假制度";
+      }
+    });
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -280,6 +436,11 @@
     });
 
     async function loadLeaveRule(leaveType) {
+      if (!leaveType) {
+        showEmptyLeaveRule();
+        return;
+      }
+
       ruleTitle.textContent = "请假规则";
       ruleList.innerHTML = "<li>正在加载请假规则...</li>";
 
@@ -292,17 +453,36 @@
         const body = await response.json();
 
         if (!response.ok || !body.success) {
-          throw new Error(body.message || "请假规则加载失败");
+          showNoPolicyRule(body.message || "暂无请假制度，请先上传制度文件");
+          return;
         }
 
-        ruleTitle.textContent = body.title;
-        ruleList.innerHTML = body.rules
-          .map((rule) => `<li>${escapeHtml(rule)}</li>`)
-          .join("");
+        if (!Array.isArray(body.rules) || body.rules.length === 0) {
+          showNoPolicyRule("暂无请假制度，请先上传制度文件");
+          return;
+        }
+
+        showLeaveRules(body.title, body.rules);
       } catch (error) {
-        ruleTitle.textContent = "请假规则提示";
-        ruleList.innerHTML = `<li>${escapeHtml(error.message)}</li>`;
+        showNoPolicyRule("暂无请假制度，请先上传制度文件");
       }
+    }
+
+    function showEmptyLeaveRule() {
+      ruleTitle.textContent = "请假规则提示";
+      ruleList.innerHTML = "<li>请选择请假类型查看规则</li>";
+    }
+
+    function showNoPolicyRule(message) {
+      ruleTitle.textContent = "请假规则提示";
+      ruleList.innerHTML = `<li>${escapeHtml(message)}</li>`;
+    }
+
+    function showLeaveRules(title, rules) {
+      ruleTitle.textContent = title || "请假规则";
+      ruleList.innerHTML = rules
+        .map((rule) => `<li>${escapeHtml(rule)}</li>`)
+        .join("");
     }
 
     function renderApprovalResult(body) {

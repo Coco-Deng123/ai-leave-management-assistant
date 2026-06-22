@@ -1,5 +1,7 @@
+import csv
 import json
 import os
+import sqlite3
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -9,7 +11,10 @@ from flask import Flask, jsonify, request, send_from_directory
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
-RULE_FILE_PATH = PROJECT_ROOT / "docs" / "请假管理制度.txt"
+POLICY_UPLOAD_DIR = PROJECT_ROOT / "uploads" / "policies"
+POLICY_FILE_PATH = POLICY_UPLOAD_DIR / "请假管理制度.txt"
+DATABASE_PATH = PROJECT_ROOT / "database" / "leave_management.db"
+UPLOAD_EMPLOYEES_DIR = PROJECT_ROOT / "uploads" / "employees"
 DIFY_API_BASE_URL = os.environ.get(
     "DIFY_API_BASE_URL",
     "https://dify.vongcloud.com/v1",
@@ -28,6 +33,15 @@ LEAVE_TYPE_NAMES = {
     "personal_leave": "事假",
 }
 
+EMPLOYEE_FIELDS = (
+    "employee_id",
+    "name",
+    "department",
+    "annual_leave",
+    "sick_leave",
+    "personal_leave",
+)
+
 
 def mask_key(api_key):
     if len(api_key) <= 10:
@@ -39,6 +53,303 @@ def print_key_debug(api_key):
     print(f"Dify API Key: {mask_key(api_key)}", flush=True)
     print(f"Dify API Key length: {len(api_key)}", flush=True)
     print(f"Dify API Key contains ellipsis: {'...' in api_key}", flush=True)
+
+
+def parse_leave_balance(value, field, row_number):
+    try:
+        balance = float(str(value).strip())
+    except (TypeError, ValueError):
+        raise ValueError(f"第 {row_number} 行 {field} 必须是数字")
+
+    if balance < 0:
+        raise ValueError(f"第 {row_number} 行 {field} 不能小于 0")
+    return balance
+
+
+def ensure_employee_upload_schema(connection):
+    def primary_key_columns(table_name):
+        columns = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        return [
+            column[1]
+            for column in sorted(
+                (column for column in columns if column[5]),
+                key=lambda column: column[5],
+            )
+        ]
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS employees (
+            company_id TEXT DEFAULT 'default_company',
+            employee_id TEXT,
+            name TEXT,
+            department TEXT,
+            position_level TEXT,
+            is_manager INTEGER,
+            hire_date TEXT,
+            province TEXT,
+            supervisor TEXT,
+            director TEXT,
+            hrbp TEXT,
+            PRIMARY KEY (company_id, employee_id)
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS leave_balances (
+            company_id TEXT DEFAULT 'default_company',
+            employee_id TEXT,
+            year INTEGER,
+            annual_leave_balance REAL,
+            sick_leave_balance REAL,
+            personal_leave_balance REAL,
+            PRIMARY KEY (company_id, employee_id, year)
+        )
+        """
+    )
+
+    employee_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(employees)")
+    }
+    leave_balance_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(leave_balances)")
+    }
+
+    if "company_id" not in employee_columns:
+        connection.execute(
+            "ALTER TABLE employees ADD COLUMN company_id TEXT DEFAULT 'default_company'"
+        )
+    if "company_id" not in leave_balance_columns:
+        connection.execute(
+            "ALTER TABLE leave_balances ADD COLUMN company_id TEXT DEFAULT 'default_company'"
+        )
+
+    if primary_key_columns("employees") != ["company_id", "employee_id"]:
+        connection.execute("ALTER TABLE employees RENAME TO employees_old")
+        connection.execute(
+            """
+            CREATE TABLE employees (
+                company_id TEXT DEFAULT 'default_company',
+                employee_id TEXT,
+                name TEXT,
+                department TEXT,
+                position_level TEXT,
+                is_manager INTEGER,
+                hire_date TEXT,
+                province TEXT,
+                supervisor TEXT,
+                director TEXT,
+                hrbp TEXT,
+                PRIMARY KEY (company_id, employee_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO employees (
+                company_id,
+                employee_id,
+                name,
+                department,
+                position_level,
+                is_manager,
+                hire_date,
+                province,
+                supervisor,
+                director,
+                hrbp
+            )
+            SELECT
+                COALESCE(company_id, 'default_company'),
+                employee_id,
+                name,
+                department,
+                position_level,
+                is_manager,
+                hire_date,
+                province,
+                supervisor,
+                director,
+                hrbp
+            FROM employees_old
+            WHERE employee_id IS NOT NULL
+            """
+        )
+        connection.execute("DROP TABLE employees_old")
+
+    if primary_key_columns("leave_balances") != ["company_id", "employee_id", "year"]:
+        connection.execute("ALTER TABLE leave_balances RENAME TO leave_balances_old")
+        connection.execute(
+            """
+            CREATE TABLE leave_balances (
+                company_id TEXT DEFAULT 'default_company',
+                employee_id TEXT,
+                year INTEGER,
+                annual_leave_balance REAL,
+                sick_leave_balance REAL,
+                personal_leave_balance REAL,
+                PRIMARY KEY (company_id, employee_id, year)
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT OR REPLACE INTO leave_balances (
+                company_id,
+                employee_id,
+                year,
+                annual_leave_balance,
+                sick_leave_balance,
+                personal_leave_balance
+            )
+            SELECT
+                COALESCE(company_id, 'default_company'),
+                employee_id,
+                year,
+                annual_leave_balance,
+                sick_leave_balance,
+                personal_leave_balance
+            FROM leave_balances_old
+            WHERE employee_id IS NOT NULL AND year IS NOT NULL
+            """
+        )
+        connection.execute("DROP TABLE leave_balances_old")
+
+
+def import_employees_csv(csv_path, company_id):
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        fieldnames = reader.fieldnames or []
+        missing_fields = [
+            field for field in EMPLOYEE_FIELDS
+            if field not in fieldnames
+        ]
+        if missing_fields:
+            raise ValueError(f"CSV 缺少字段：{', '.join(missing_fields)}")
+
+        rows = []
+        for row_number, row in enumerate(reader, start=2):
+            employee_id = (row.get("employee_id") or "").strip()
+            if not employee_id:
+                raise ValueError(f"第 {row_number} 行 employee_id 不能为空")
+
+            rows.append(
+                {
+                    "employee_id": employee_id,
+                    "name": row.get("name", "").strip(),
+                    "department": row.get("department", "").strip(),
+                    "annual_leave": parse_leave_balance(
+                        row.get("annual_leave"), "annual_leave", row_number
+                    ),
+                    "sick_leave": parse_leave_balance(
+                        row.get("sick_leave"), "sick_leave", row_number
+                    ),
+                    "personal_leave": parse_leave_balance(
+                        row.get("personal_leave"), "personal_leave", row_number
+                    ),
+                }
+            )
+
+    inserted = 0
+    updated = 0
+    with sqlite3.connect(DATABASE_PATH) as connection:
+        ensure_employee_upload_schema(connection)
+
+        for row in rows:
+            existing = connection.execute(
+                """
+                SELECT 1
+                FROM employees
+                WHERE company_id = ? AND employee_id = ?
+                """,
+                (company_id, row["employee_id"]),
+            ).fetchone()
+
+            if existing:
+                connection.execute(
+                    """
+                    UPDATE employees
+                    SET name = ?, department = ?
+                    WHERE company_id = ? AND employee_id = ?
+                    """,
+                    (
+                        row["name"],
+                        row["department"],
+                        company_id,
+                        row["employee_id"],
+                    ),
+                )
+                updated += 1
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO employees (
+                        company_id,
+                        employee_id,
+                        name,
+                        department
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        company_id,
+                        row["employee_id"],
+                        row["name"],
+                        row["department"],
+                    ),
+                )
+                inserted += 1
+
+            leave_balance_exists = connection.execute(
+                """
+                SELECT 1
+                FROM leave_balances
+                WHERE company_id = ? AND employee_id = ? AND year = ?
+                """,
+                (company_id, row["employee_id"], 2026),
+            ).fetchone()
+
+            if leave_balance_exists:
+                connection.execute(
+                    """
+                    UPDATE leave_balances
+                    SET annual_leave_balance = ?,
+                        sick_leave_balance = ?,
+                        personal_leave_balance = ?
+                    WHERE company_id = ? AND employee_id = ? AND year = ?
+                    """,
+                    (
+                        row["annual_leave"],
+                        row["sick_leave"],
+                        row["personal_leave"],
+                        company_id,
+                        row["employee_id"],
+                        2026,
+                    ),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO leave_balances (
+                        company_id,
+                        employee_id,
+                        year,
+                        annual_leave_balance,
+                        sick_leave_balance,
+                        personal_leave_balance
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        company_id,
+                        row["employee_id"],
+                        2026,
+                        row["annual_leave"],
+                        row["sick_leave"],
+                        row["personal_leave"],
+                    ),
+                )
+
+    return inserted, updated
 
 
 def extract_dify_output(dify_result):
@@ -112,12 +423,27 @@ def normalize_rule(rule, leave_type):
     return rule
 
 
+def get_uploaded_policy_path():
+    if POLICY_FILE_PATH.exists():
+        return POLICY_FILE_PATH
+
+    if not POLICY_UPLOAD_DIR.exists():
+        return None
+
+    policy_files = sorted(POLICY_UPLOAD_DIR.glob("*.txt"))
+    return policy_files[-1] if policy_files else None
+
+
 def read_leave_rules(leave_type):
     leave_name = LEAVE_TYPE_NAMES.get(leave_type)
     if leave_name is None:
         return None
 
-    policy_text = RULE_FILE_PATH.read_text(encoding="utf-8")
+    policy_path = get_uploaded_policy_path()
+    if policy_path is None:
+        return None
+
+    policy_text = policy_path.read_text(encoding="utf-8")
     rules = []
 
     for line in policy_text.splitlines():
@@ -159,8 +485,8 @@ def leave_rule(leave_type):
     if leave_type not in LEAVE_TYPE_NAMES:
         return jsonify(success=False, message="不支持的请假类型"), 400
 
-    if not RULE_FILE_PATH.exists():
-        return jsonify(success=False, message="请假管理制度文件不存在"), 404
+    if get_uploaded_policy_path() is None:
+        return jsonify(success=False, message="暂无请假制度"), 200
 
     try:
         rule_info = read_leave_rules(leave_type)
@@ -168,6 +494,51 @@ def leave_rule(leave_type):
         return jsonify(success=False, message="请假管理制度文件必须使用 UTF-8 编码"), 500
 
     return jsonify(success=True, **rule_info)
+
+
+@app.post("/api/upload-employees")
+def upload_employees():
+    uploaded_file = request.files.get("file")
+    if uploaded_file is None or not uploaded_file.filename:
+        return jsonify(success=False, message="请上传员工 CSV 文件"), 400
+    company_id = (request.form.get("company_id") or "default_company").strip()
+    if not company_id:
+        company_id = "default_company"
+
+    original_name = Path(uploaded_file.filename).name
+    if not original_name.lower().endswith(".csv"):
+        return jsonify(success=False, message="只支持上传 CSV 文件"), 400
+
+    UPLOAD_EMPLOYEES_DIR.mkdir(parents=True, exist_ok=True)
+    saved_path = UPLOAD_EMPLOYEES_DIR / original_name
+    uploaded_file.save(saved_path)
+
+    try:
+        inserted, updated = import_employees_csv(saved_path, company_id)
+    except (UnicodeDecodeError, csv.Error, sqlite3.Error, ValueError) as error:
+        return jsonify(success=False, message=str(error)), 400
+
+    return jsonify(
+        success=True,
+        inserted=inserted,
+        updated=updated,
+    )
+
+
+@app.post("/api/upload-policy")
+def upload_policy():
+    uploaded_file = request.files.get("file")
+    if uploaded_file is None or not uploaded_file.filename:
+        return jsonify(success=False, message="请上传请假制度 txt 文件"), 400
+
+    original_name = Path(uploaded_file.filename).name
+    if not original_name.lower().endswith(".txt"):
+        return jsonify(success=False, message="暂时只支持上传 txt 文件"), 400
+
+    POLICY_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    uploaded_file.save(POLICY_FILE_PATH)
+
+    return jsonify(success=True, message="请假制度上传成功")
 
 
 @app.post("/api/leave-request")
